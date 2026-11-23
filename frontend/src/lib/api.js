@@ -6,7 +6,13 @@ export const VAULT = IS_APPLE ? 'iCloud Keychain' : IS_ANDROID ? 'Google Passwor
 export const webauthnOK = () => !!(window.PublicKeyCredential && navigator.credentials)
 
 export async function api(path, opts) {
-  const r = await fetch(path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts))
+  // Google Sheets build (lib/sheets.js): there is no /api server behind the static files.
+  // Fail fast, like an offline server would — every caller already handles that — instead
+  // of sending requests that can only 404.
+  if (import.meta.env.VITE_STORAGE === 'sheets') {
+    const e = new Error('Not available in the Google Sheets version'); e.status = 0; throw e
+  }
+  const r = await fetch(path,Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts))
   const data = await r.json().catch(() => ({}))
   if (!r.ok) { const e = new Error(data.error || ('HTTP ' + r.status)); e.status = r.status; throw e }
   return data

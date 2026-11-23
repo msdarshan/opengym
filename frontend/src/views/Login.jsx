@@ -4,6 +4,54 @@ import { webauthnOK, passkeyLogin, passkeyRegister, api, BIO } from '../lib/api.
 import { hasData } from '../store/useStore.js'
 import { t } from '../lib/i18n.js'
 import { DEMO, REPO } from '../lib/demo.js'
+import { SHEETS, validScriptUrl } from '../lib/sheets.js'
+
+// Sheets build: "signing in" is pasting the Apps Script web-app URL and the access key once
+// per device. See apps-script/README.md for creating them.
+function SheetsConnect({ head, wrap, setGuest }) {
+  const connectSheets = useStore(s => s.connectSheets)
+  const [url, setUrl] = useState('')
+  const [key, setKey] = useState('')
+  const [name, setName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const go = async () => {
+    setErr('')
+    if (!validScriptUrl(url)) { setErr(t('Paste the web app URL from Apps Script — it starts with https://script.google.com/macros/s/ and ends with /exec')); return }
+    if (key.trim().length < 12) { setErr(t('Enter the access key you put in the script (at least 12 characters)')); return }
+    setBusy(true)
+    try {
+      const how = await connectSheets({ url, key, name: name || t('Me') })
+      useUI.getState().toast(how === 'pulled' ? t('Connected — your data is loaded from Google Sheets')
+        : how === 'pushed' ? t('Connected — data from this device saved to Google Sheets')
+        : t('Connected to Google Sheets'))
+    } catch (e) { setErr(e.message || t('Could not connect')) }
+    setBusy(false)
+  }
+  const field = { textAlign: 'left' }
+  return (
+    <div className="narrow" style={wrap}>
+      {head}
+      <div className="muted" style={{ marginBottom: 22 }}>{t('Your workouts, saved in your own Google Sheet.')}</div>
+      <input className="input" style={field} placeholder={t('Apps Script web app URL')} value={url}
+        onChange={e => setUrl(e.target.value)} autoCapitalize="off" autoCorrect="off" spellCheck={false} />
+      <div style={{ height: 10 }} />
+      <input className="input" style={field} type="password" placeholder={t('Access key')} value={key}
+        onChange={e => setKey(e.target.value)} autoCapitalize="off" autoCorrect="off" spellCheck={false} />
+      <div style={{ height: 10 }} />
+      <input className="input" style={field} placeholder={t('Your name (optional)')} maxLength={40} value={name}
+        onChange={e => setName(e.target.value)} />
+      {err && <div className="small" role="alert" style={{ color: 'var(--red)', marginTop: 10, textAlign: 'left' }}>{err}</div>}
+      <div style={{ height: 14 }} />
+      <Button variant="primary" icon="link" onClick={go} disabled={busy}>{busy ? t('Connecting…') : t('Connect Google Sheet')}</Button>
+      <div style={{ height: 10 }} />
+      <Button variant="ghost" className="dim" onClick={() => setGuest(true)}>{t('Continue without syncing')}</Button>
+      <div className="dim small" style={{ marginTop: 22, lineHeight: 1.5 }}>
+        {t('Enter these once on each device — your phone and laptop then share the same data.')}
+      </div>
+    </div>
+  )
+}
 import { useState, useRef, useEffect } from 'react'
 import Icon from '../components/Icon.jsx'
 import { Button } from '../components/ui.jsx'
@@ -53,6 +101,8 @@ export default function Login() {
     <h1 style={{ fontSize: 34, fontWeight: 700, letterSpacing: '-.028em', margin: '10px 0 4px' }}>openGym</h1>
   </>
   const wrap = { display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: '78vh', textAlign: 'center' }
+
+  if (SHEETS) return <SheetsConnect head={head} wrap={wrap} setGuest={setGuest} />
 
   // Demo build: no backend to sign in against — the only way in is the local guest profile.
   if (DEMO) return (

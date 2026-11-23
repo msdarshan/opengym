@@ -4,6 +4,7 @@ import { localTZ } from '../lib/format.js'
 import { registerCustom } from '../lib/exercises.js'
 import { DEMO, DEMO_SEEDED } from '../lib/demo.js'
 import { MOBILE, nativeLoad, nativeSave, syncReminder } from '../lib/mobile.js'
+import { SHEETS, sheetsConfig, sheetsLoad, sheetsSave, sheetsPing, sheetsUser, saveSheetsConfig, clearSheetsConfig } from '../lib/sheets.js'
 
 const KEY = 'gym_state_v1'
 export const DEF = {
@@ -112,12 +113,16 @@ export const useStore = create((set, get) => {
     async pushState() {
       if (!get().user) return
       clearTimeout(pushTm)
-      try { await api('/api/data', { method: 'PUT', body: JSON.stringify({ state: get().S }) }); localStorage.removeItem('gym_dirty') }
+      try {
+        if (SHEETS) await sheetsSave(get().S)
+        else await api('/api/data', { method: 'PUT', body: JSON.stringify({ state: get().S }) })
+        localStorage.removeItem('gym_dirty')
+      }
       catch (e) { localStorage.setItem('gym_dirty', '1') }
     },
     async pullState() {
       try {
-        const { state } = await api('/api/data')
+        const { state } = SHEETS ? await sheetsLoad() : await api('/api/data')
         const S = get().S
         const dirty = localStorage.getItem('gym_dirty') === '1'
         if (state && (!hasData(S) || ((state._ts || 0) >= (S._ts || 0) && !dirty))) {
@@ -130,8 +135,36 @@ export const useStore = create((set, get) => {
     },
 
     async signOut() {
+      if (SHEETS) {
+        await get().pushState()   // never throws
+        clearSheetsConfig()
+        clearLocalSession()
+        return
+      }
       try { await get().pushState(); await api('/api/logout', { method: 'POST', body: '{}' }) } catch (e) { /* */ }
       clearLocalSession()
+    },
+
+    // Sheets build: check the URL + key, remember them on this device, then line up local and
+    // remote data. When the Sheet already holds a profile it wins — a second device joining
+    // must never overwrite the history with whatever it had locally. An empty Sheet is seeded
+    // from this device instead. Throws (nothing saved) when the Sheet can't be reached.
+    async connectSheets(cfg) {
+      const clean = { url: cfg.url.trim(), key: cfg.key.trim(), name: (cfg.name || '').trim() }
+      await sheetsPing(clean)
+      const { state } = await sheetsLoad(clean)
+      saveSheetsConfig(clean)
+      get().setUser(sheetsUser(clean))
+      const local = get().S
+      if (state && hasData(state)) {
+        const next = Object.assign(clone(DEF), state)
+        if (local.active) next.active = local.active
+        localStorage.removeItem('gym_dirty')
+        persist(next, false)
+        return 'pulled'
+      }
+      if (hasData(local)) { await get().pushState(); return 'pushed' }
+      return 'empty'
     },
 
     // "Sign out everywhere": the server bumps this profile's session version, which kills every
@@ -177,6 +210,14 @@ export const useStore = create((set, get) => {
           await get().resetDemo()
         }
         get().setGuest(true)
+        set({ ready: true })
+        return
+      }
+      // Sheets build: no server to ask — a saved connection on this device is the sign-in.
+      if (SHEETS) {
+        const c = sheetsConfig()
+        if (c) { get().setUser(sheetsUser(c)); await get().pullState() }
+        else if (get().user) get().setUser(null)
         set({ ready: true })
         return
       }

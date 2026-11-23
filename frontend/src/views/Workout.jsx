@@ -14,6 +14,7 @@ import Icon from '../components/Icon.jsx'
 import { Button, Check, NumberField } from '../components/ui.jsx'
 import { nextPrescription, applyPrescription } from '../lib/progression.js'
 import { glyphOf } from '../lib/glyphs.js'
+import { SHEETS } from '../lib/sheets.js'
 
 /* ---------- start chooser (no active workout) ---------- */
 function StartChooser() {
@@ -212,7 +213,7 @@ function ActiveWorkout() {
   // Live-presence heartbeat so the admin dashboard can show who's training now. Signed-in only —
   // guests have no server session. Reads fresh state each tick so progress stays current.
   useEffect(() => {
-    if (!useStore.getState().user) return
+    if (!useStore.getState().user || SHEETS) return
     let stopped = false
     const ping = active => {
       const A2 = useStore.getState().S.active

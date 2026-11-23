@@ -1,10 +1,12 @@
-# Publishes the browser-only demo to GitHub Pages: https://duartesantos8.github.io/openGym/
+# Publishes openGym to GitHub Pages with Google Sheets as its storage.
 #
-# Pages serves static files only, so this build has no backend — VITE_DEMO=1 makes the app
-# boot straight into guest mode with a seeded example history (see frontend/src/lib/demo.js).
-# The exercise images/GIFs (~140 MB) are never committed here; the demo build points at the
+# Pages serves static files only, so this build has no Node backend. VITE_STORAGE=sheets makes
+# the app save to a Google Sheet through a small Apps Script web app you deploy yourself
+# (see apps-script/README.md and frontend/src/lib/sheets.js). Nothing secret is built in:
+# each device asks for the script URL and access key once.
+# The exercise images/GIFs (~140 MB) are never committed here; the build points at the
 # upstream dataset on jsDelivr instead, pinned to a commit so the CDN can cache it forever.
-name: Deploy demo to GitHub Pages
+name: Deploy to GitHub Pages
 
 on:
   push:
@@ -41,7 +43,7 @@ jobs:
       - run: npm run build
         working-directory: frontend
         env:
-          VITE_DEMO: '1'
+          VITE_STORAGE: sheets
           VITE_IMG_BASE: ${{ env.DATASET }}/images/
           VITE_GIF_BASE: ${{ env.DATASET }}/videos/
       - uses: actions/configure-pages@v6

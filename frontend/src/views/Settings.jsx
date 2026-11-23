@@ -10,6 +10,7 @@ import { wakeLockSupported } from '../lib/wakelock.js'
 import { t, LANGS, INSTR_LANGS } from '../lib/i18n.js'
 import { DEMO, REPO } from '../lib/demo.js'
 import { MOBILE, shareExport, syncReminder } from '../lib/mobile.js'
+import { SHEETS } from '../lib/sheets.js'
 import { loadStarterPlan, confirmSheet, importFromApp } from '../sheets.jsx'
 import { coachAvailable, hasConsent } from '../lib/coach.js'
 import { forgetCoach } from '../lib/coach-api.js'
@@ -21,7 +22,11 @@ export default function Settings() {
   const S = useStore(s => s.S)
   const user = useStore(s => s.user)
   const config = useStore(s => s.config)
-  const { update, replaceState, setUser, pullState, pushState, signOut, signOutAll, resetDemo } = useStore()
+  const { update, replaceState, setUser, setGuest, pullState, pushState, signOut, signOutAll, resetDemo } = useStore()
+  const syncNow = async () => {
+    await pushState()
+    toast(localStorage.getItem('gym_dirty') === '1' ? t('Could not reach Google Sheets — will retry on the next change') : t('Saved to Google Sheets'))
+  }
   const toast = useUI(s => s.toast)
   const fileRef = useRef(null)
   const importRef = useRef(null)
@@ -87,7 +92,13 @@ export default function Settings() {
           onClick={() => confirmSheet({ title: t('Reset demo data?'), message: t('Puts the example plan, workouts and weigh-ins back the way they started.'), confirmText: t('Reset'), onConfirm: () => { resetDemo(); nav('/home'); toast(t('Demo data reset')) } })} />
         <Row icon="rocket" iconTint="var(--indigo)" title={t('Self-host openGym')} subtitle={t('Passkey sign-in, sync across your devices, your own data.')} accessory="chevron"
           onClick={() => window.open(REPO, '_blank', 'noopener')} />
-      </> : user ? <>
+      </> : SHEETS ? (user ? <>
+        <Row icon="personCircle" iconTint="var(--grey)" title={user.name} subtitle={t('Connected to your Google Sheet — data syncs across your devices.')} />
+        <Row icon="upload" iconTint="var(--blue)" title={t('Save to Google Sheets now')} accessory="chevron" onClick={syncNow} />
+        <Row icon="signOut" iconTint="var(--red)" title={t('Disconnect this device')} danger onClick={() => confirmSheet({ title: t('Disconnect this device?'), message: t('Your data is saved to the Sheet first, then cleared from this device. Reconnect anytime with the same URL and key.'), confirmText: t('Disconnect'), danger: true, onConfirm: () => { signOut(); nav('/home') } })} />
+      </> : <>
+        <Row icon="link" iconTint="var(--acc)" title={t('Connect Google Sheet')} subtitle={t('Sync this device’s data to your own Google Sheet.')} accessory="chevron" onClick={() => { setGuest(false); nav('/home') }} />
+      </>) : user ? <>
         <Row icon="personCircle" iconTint="var(--grey)" title={user.name} subtitle={t('Signed in with passkey — data syncs to this profile.')} />
         {user.admin && <Row icon="wrench" iconTint="var(--indigo)" title={t('Admin dashboard')} accessory="chevron" onClick={() => nav('/admin')} />}
         <Row icon="signOut" iconTint="var(--red)" title={t('Sign out')} danger onClick={() => confirmSheet({ title: t('Sign out?'), message: t('Your data is synced to your profile first, then cleared from this device.'), confirmText: t('Sign out'), danger: true, onConfirm: () => { signOut(); nav('/home') } })} />
@@ -153,7 +164,7 @@ export default function Settings() {
       </Section>
     )}
 
-    {(user || MOBILE) && <NotificationsCard S={S} update={update} toast={toast} />}
+    {(user || MOBILE) && !SHEETS && <NotificationsCard S={S} update={update} toast={toast} />}
 
     {/* ---------- appearance ---------- */}
     <Section title={t('Appearance')} footer={DEMO || MOBILE ? undefined : t('synced with your profile')}>
