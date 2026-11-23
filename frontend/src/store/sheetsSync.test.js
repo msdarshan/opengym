@@ -89,6 +89,23 @@ describe('Google Sheets sync between two devices', () => {
     expect(stored().unit).toBe('lb')
   })
 
+  it('connecting keeps a workout logged on this device before it was connected', async () => {
+    const phone = await device()
+    // Logged without a connection ("Continue without syncing", or not connected yet).
+    await phone.on(s => { s.setGuest(true); s.update(S => { S.workouts.push({ id: 'gym', start: 50, name: 'Logged offline', entries: [] }) }, false) })
+    const how = await phone.on(s => s.connectSheets({ url: URL, key: KEY, name: 'Me' }))
+    expect(how).toBe('merged')
+    expect(names(phone.store.getState().S)).toEqual(['Logged offline'])   // still on the phone
+    expect(names(stored())).toEqual(['Logged offline'])                    // and now in the Sheet
+    expect(upperEx(stored())).toEqual(['0047'])                            // the Sheet's plan kept
+  })
+
+  it('a fresh device with nothing logged simply loads the Sheet', async () => {
+    const d = await device()
+    expect(await d.on(s => s.connectSheets({ url: URL, key: KEY }))).toBe('pulled')
+    expect(upperEx(d.store.getState().S)).toEqual(['0047'])
+  })
+
   it('a device on the old version (no merge history) merges a restored Sheet back in', async () => {
     const phone = await device()
     await phone.on(s => s.connectSheets({ url: URL, key: KEY }))

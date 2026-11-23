@@ -204,7 +204,17 @@ export const useStore = create((set, get) => {
       saveSheetsConfig(clean)
       get().setUser(sheetsUser(clean))
       const local = get().S
+      // Data logged on this device before connecting must never be dropped: when both sides
+      // have data they are merged (no shared history yet, so lists are unioned).
       if (state && hasData(state)) {
+        if (hasData(local)) {
+          const merged = Object.assign(clone(DEF), mergeStates(null, local, state))
+          persist(merged, false)
+          await sheetsSave(get().S, clean)
+          setBase(get().S)
+          localStorage.removeItem('gym_dirty')
+          return 'merged'
+        }
         const next = Object.assign(clone(DEF), state)
         if (local.active) next.active = local.active
         localStorage.removeItem('gym_dirty')

@@ -22,7 +22,8 @@ function SheetsConnect({ head, wrap, setGuest }) {
     setBusy(true)
     try {
       const how = await connectSheets({ url, key, name: name || t('Me') })
-      useUI.getState().toast(how === 'pulled' ? t('Connected — your data is loaded from Google Sheets')
+      useUI.getState().toast(how === 'merged' ? t('Connected — this device’s data and your Google Sheet are combined')
+        : how === 'pulled' ? t('Connected — your data is loaded from Google Sheets')
         : how === 'pushed' ? t('Connected — data from this device saved to Google Sheets')
         : t('Connected to Google Sheets'))
     } catch (e) { setErr(e.message || t('Could not connect')) }
