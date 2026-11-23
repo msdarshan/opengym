@@ -16,6 +16,11 @@
 // Anyone with this key and the web app URL can read and change your gym data.
 const ACCESS_KEY = 'PASTE_YOUR_ACCESS_KEY_HERE';
 
+// Leave empty when the script was created from the Sheet (Extensions → Apps Script).
+// For a standalone project (script.new), put the spreadsheet's ID here — the long part of
+// its URL between /d/ and /edit.
+const SHEET_ID = '';
+
 const DATA_SHEET = '_opengym_data';
 const CHUNK = 40000;            // characters per cell, under Sheets' 50,000 limit
 const MAX_STATE = 20 * 1000 * 1000;
@@ -34,7 +39,8 @@ function doPost(e) {
     return reply({ ok: false, status: 401, error: 'Wrong access key' });
   }
 
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = SHEET_ID ? SpreadsheetApp.openById(SHEET_ID) : SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) return reply({ ok: false, status: 500, error: 'No spreadsheet — set SHEET_ID in the Apps Script code' });
   switch (req.action) {
     case 'ping':
       return reply({ ok: true, sheet: ss.getName() });

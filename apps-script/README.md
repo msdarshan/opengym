@@ -19,6 +19,10 @@ invites/admin, push notifications and the AI Coach.
    same key into the app.
 5. Click **Save** (the disk icon).
 
+**Alternative:** if Extensions → Apps Script doesn't open (for example a browser that blocks
+the new tab), create a standalone project at <https://script.new> instead, paste the same
+code, and set `SHEET_ID` to the long ID in your Sheet's URL (between `/d/` and `/edit`).
+
 ## 2. Deploy it as a web app
 
 1. Click **Deploy → New deployment**.
