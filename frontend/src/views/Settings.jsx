@@ -15,6 +15,7 @@ import { loadStarterPlan, confirmSheet, importFromApp } from '../sheets.jsx'
 import { coachAvailable, hasConsent } from '../lib/coach.js'
 import { forgetCoach } from '../lib/coach-api.js'
 import Icon from '../components/Icon.jsx'
+import SyncStatus from '../components/SyncStatus.jsx'
 import { Section, Row, SelectRow, Switch, Segmented, Button, TextField } from '../components/ui.jsx'
 
 export default function Settings() {
@@ -94,6 +95,7 @@ export default function Settings() {
           onClick={() => window.open(REPO, '_blank', 'noopener')} />
       </> : SHEETS ? (user ? <>
         <Row icon="personCircle" iconTint="var(--grey)" title={user.name} subtitle={t('Connected to your Google Sheet — data syncs across your devices.')} />
+        <div style={{ padding: '4px 14px 10px' }}><SyncStatus full /></div>
         <Row icon="upload" iconTint="var(--blue)" title={t('Save to Google Sheets now')} accessory="chevron" onClick={syncNow} />
         <Row icon="signOut" iconTint="var(--red)" title={t('Disconnect this device')} danger onClick={() => confirmSheet({ title: t('Disconnect this device?'), message: t('Your data is saved to the Sheet first, then cleared from this device. Reconnect anytime with the same URL and key.'), confirmText: t('Disconnect'), danger: true, onConfirm: () => { signOut(); nav('/home') } })} />
       </> : <>

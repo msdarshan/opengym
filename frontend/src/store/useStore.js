@@ -8,6 +8,7 @@ import { SHEETS, sheetsConfig, sheetsLoad, sheetsSave, sheetsPing, sheetsUser, s
 import { mergeStates, sameState } from '../lib/merge.js'
 
 const BASE_KEY = 'gym_sheets_base'
+const SYNCED_AT = 'gym_sheets_synced_at'
 
 const KEY = 'gym_state_v1'
 export const DEF = {
@@ -56,8 +57,24 @@ export const useStore = create((set, get) => {
     if (MOBILE) nativePersist()
     if (push && get().user) {
       clearTimeout(pushTm)
-      pushTm = setTimeout(() => get().pushState(), 1500)
+      pushTm = setTimeout(() => { pushTm = null; get().pushState() }, 1500)
+      if (SHEETS) setSync({ state: 'pending' })
     }
+  }
+
+  // Sheets build: what the sync light shows (components/SyncStatus.jsx).
+  //   ok       — this device and the Sheet match (`at`: when they last did)
+  //   pending  — a change here is waiting to be saved
+  //   syncing  — talking to Google right now
+  //   offline  — no connection; changes are kept here and saved when it's back
+  //   error    — Google didn't take it (`error` says why); retried on the next change
+  const setSync = p => {
+    if (p.state === 'ok') { p.at = Date.now(); p.error = null; try { localStorage.setItem(SYNCED_AT, String(p.at)) } catch { /* */ } }
+    set({ sync: { ...get().sync, ...p } })
+  }
+  if (SHEETS && typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('offline', () => { if (get().user) setSync({ state: 'offline' }) })
+    window.addEventListener('online', () => { if (get().user) get().pullState() })
   }
 
   // A setting changed right before switching away/closing the tab must not get lost mid-debounce
@@ -95,6 +112,7 @@ export const useStore = create((set, get) => {
   const sheetsSync = () => {
     if (syncRun) { syncAgain = true; return syncRun }
     syncRun = (async () => {
+      setSync({ state: 'syncing' })
       do {
         syncAgain = false
         try {
@@ -112,9 +130,12 @@ export const useStore = create((set, get) => {
           setBase(next)
           localStorage.removeItem('gym_dirty')
           if (get().S !== next) syncAgain = true                         // changed while saving
+          else setSync({ state: pushTm ? 'pending' : 'ok' })
         } catch (e) {
           localStorage.setItem('gym_dirty', '1')
           syncAgain = false
+          const off = typeof navigator !== 'undefined' && navigator.onLine === false
+          setSync({ state: off ? 'offline' : 'error', error: e.message || 'Could not save' })
         }
       } while (syncAgain)
     })().finally(() => { syncRun = null })
@@ -134,6 +155,12 @@ export const useStore = create((set, get) => {
     S: (() => { const s = loadState(); registerCustom(s.customEx); return s })(),
     user: (() => { try { return JSON.parse(localStorage.getItem('gym_user')) || null } catch { return null } })(),
     ready: false,
+    sync: (() => {
+      let at = null
+      try { at = +localStorage.getItem(SYNCED_AT) || null } catch { /* */ }
+      const dirty = (() => { try { return localStorage.getItem('gym_dirty') === '1' } catch { return false } })()
+      return { state: dirty ? 'pending' : (at ? 'ok' : 'pending'), at, error: null }
+    })(),
     // Instance capabilities from GET /api/config. `config.coach` is present only when the
     // owner has both enabled the Coach and connected a provider — every Coach entry point in
     // the app hangs off it, so an unconfigured instance renders exactly what it always did.
@@ -159,6 +186,7 @@ export const useStore = create((set, get) => {
     async pushState() {
       if (!get().user) return
       clearTimeout(pushTm)
+      pushTm = null
       if (SHEETS) return sheetsSync()
       try {
         await api('/api/data', { method: 'PUT', body: JSON.stringify({ state: get().S }) })
@@ -213,6 +241,7 @@ export const useStore = create((set, get) => {
           await sheetsSave(get().S, clean)
           setBase(get().S)
           localStorage.removeItem('gym_dirty')
+          setSync({ state: 'ok' })
           return 'merged'
         }
         const next = Object.assign(clone(DEF), state)
@@ -220,9 +249,11 @@ export const useStore = create((set, get) => {
         localStorage.removeItem('gym_dirty')
         persist(next, false)
         setBase(state)
+        setSync({ state: 'ok' })
         return 'pulled'
       }
-      if (hasData(local)) { await sheetsSave(local, clean); setBase(local); return 'pushed' }
+      if (hasData(local)) { await sheetsSave(local, clean); setBase(local); setSync({ state: 'ok' }); return 'pushed' }
+      setSync({ state: 'ok' })
       return 'empty'
     },
 

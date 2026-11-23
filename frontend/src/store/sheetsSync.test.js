@@ -106,6 +106,33 @@ describe('Google Sheets sync between two devices', () => {
     expect(upperEx(d.store.getState().S)).toEqual(['0047'])
   })
 
+  it('the sync light follows connect → change → save → failure', async () => {
+    const d = await device()
+    await d.on(s => s.connectSheets({ url: URL, key: KEY }))
+    expect(d.store.getState().sync.state).toBe('ok')
+    expect(d.store.getState().sync.at).toBeGreaterThan(0)
+
+    await d.on(s => s.update(S => { S.unit = 'lb' }))           // a real change schedules a save
+    expect(d.store.getState().sync.state).toBe('pending')
+
+    await d.on(s => s.pushState())
+    expect(d.store.getState().sync.state).toBe('ok')
+    expect(stored().unit).toBe('lb')
+
+    const realFetch = globalThis.fetch
+    globalThis.fetch = async () => { throw new TypeError('Failed to fetch') }
+    try {
+      await d.on(s => { s.update(S => { S.unit = 'kg' }, false); return s.pushState() })
+      expect(d.store.getState().sync.state).toBe('error')
+      expect(d.store.getState().sync.error).toMatch(/reach your Google Sheet/)
+      expect(d.ls.getItem('gym_dirty')).toBe('1')
+    } finally { globalThis.fetch = realFetch }
+
+    await d.on(s => s.pushState())                               // back online: retry succeeds
+    expect(d.store.getState().sync.state).toBe('ok')
+    expect(stored().unit).toBe('kg')
+  })
+
   it('a device on the old version (no merge history) merges a restored Sheet back in', async () => {
     const phone = await device()
     await phone.on(s => s.connectSheets({ url: URL, key: KEY }))
