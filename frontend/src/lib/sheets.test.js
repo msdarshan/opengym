@@ -126,6 +126,37 @@ describe('talking to the script', () => {
     await expect(sheetsSave({}, cfg)).rejects.toMatchObject({ status: 0 })
   })
 
+  it('retries an empty answer and a failed request, then succeeds', async () => {
+    let n = 0
+    globalThis.fetch = vi.fn(async () => {
+      n++
+      if (n === 1) throw new TypeError('Failed to fetch')
+      if (n === 2) return { ok: true, status: 200, text: async () => '' }
+      return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, state: null }) }
+    })
+    await expect(sheetsLoad(cfg)).resolves.toEqual({ state: null })
+    expect(n).toBe(3)
+  })
+
+  it('gives up after repeated empty answers with a clear error', async () => {
+    globalThis.fetch = vi.fn(async () => ({ ok: true, status: 200, text: async () => '' }))
+    await expect(sheetsLoad(cfg)).rejects.toMatchObject({ status: 0, message: expect.stringMatching(/didn’t answer/) })
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3)
+  })
+
+  it('aborts a request that hangs', async () => {
+    vi.useFakeTimers()
+    globalThis.fetch = vi.fn((url, init) => new Promise((_, reject) => {
+      init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+    }))
+    const p = sheetsLoad(cfg)
+    const check = expect(p).rejects.toMatchObject({ status: 0 })
+    await vi.advanceTimersByTimeAsync(30000 * 3 + 10)
+    await check
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3)
+    vi.useRealTimers()
+  })
+
   it('refuses to run without a saved connection', async () => {
     await expect(sheetsLoad()).rejects.toMatchObject({ status: 401 })
   })

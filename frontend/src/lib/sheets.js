@@ -41,21 +41,43 @@ export const validScriptUrl = u =>
 // Apps Script web apps answer a POST with a redirect to script.googleusercontent.com; fetch
 // follows it. text/plain keeps this a "simple" request, so no CORS preflight is needed —
 // Apps Script cannot answer one. The key travels in the body, never in the URL.
+// Google occasionally leaves a request hanging for minutes or answers with an empty body.
+// Each attempt gets a time limit, and a hung or empty answer is tried again, so one bad
+// request can't stall syncing until the app is restarted.
+export const TIMEOUT_MS = 30000
+const ATTEMPTS = 3
+
 async function call(cfg, body) {
-  let r
-  try {
-    r = await fetch(cfg.url.trim(), {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ ...body, key: cfg.key }),
-      redirect: 'follow'
-    })
-  } catch (e) {
+  let r, text = ''
+  for (let i = 0; i < ATTEMPTS; i++) {
+    const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null
+    const tm = ctl ? setTimeout(() => ctl.abort(), TIMEOUT_MS) : null
+    try {
+      r = await fetch(cfg.url.trim(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ ...body, key: cfg.key }),
+        redirect: 'follow',
+        ...(ctl ? { signal: ctl.signal } : {})
+      })
+      text = await r.text()
+    } catch (e) {
+      r = null; text = ''
+    } finally {
+      if (tm) clearTimeout(tm)
+    }
+    if (r && (text || !r.ok)) break
+  }
+  if (!r) {
     const err = new Error('Could not reach your Google Sheet — check your connection')
     err.status = 0
     throw err
   }
-  const text = await r.text()
+  if (r.ok && !text) {
+    const err = new Error('Google Sheets didn’t answer — your data is kept and will be saved on the next try')
+    err.status = 0
+    throw err
+  }
   let data
   try { data = JSON.parse(text) } catch {
     const err = new Error(r.ok
