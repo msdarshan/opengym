@@ -5,6 +5,9 @@ import { registerCustom } from '../lib/exercises.js'
 import { DEMO, DEMO_SEEDED } from '../lib/demo.js'
 import { MOBILE, nativeLoad, nativeSave, syncReminder } from '../lib/mobile.js'
 import { SHEETS, sheetsConfig, sheetsLoad, sheetsSave, sheetsPing, sheetsUser, saveSheetsConfig, clearSheetsConfig } from '../lib/sheets.js'
+import { mergeStates, sameState } from '../lib/merge.js'
+
+const BASE_KEY = 'gym_sheets_base'
 
 const KEY = 'gym_state_v1'
 export const DEF = {
@@ -62,7 +65,12 @@ export const useStore = create((set, get) => {
   // same applies to the file mirror — backgrounding is often the last thing before the OS
   // kills the app.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'hidden') return
+    // Sheets build: coming back to an app left open (another device may have saved since)
+    // pulls and merges before anything here gets saved on top of a stale copy.
+    if (document.visibilityState === 'visible') {
+      if (SHEETS && get().user) get().pullState()
+      return
+    }
     if (MOBILE && saveTm) {
       clearTimeout(saveTm)
       saveTm = null
@@ -74,6 +82,44 @@ export const useStore = create((set, get) => {
       get().pushState()
     }
   })
+
+  // ---- Google Sheets sync (lib/sheets.js) ----
+  // The Sheet holds one whole-state document, so a plain "save mine" from a device with an
+  // old copy would wipe whatever another device saved in between. Instead every sync reads
+  // what is stored and three-way merges it with this device's copy against `base` — the last
+  // state this device and the Sheet agreed on (lib/merge.js). Load and save both go through
+  // here, one run at a time.
+  const getBase = () => { try { return JSON.parse(localStorage.getItem(BASE_KEY)) } catch { return null } }
+  const setBase = s => { try { localStorage.setItem(BASE_KEY, JSON.stringify(s)) } catch { /* full: next sync merges without it */ } }
+  let syncRun = null, syncAgain = false
+  const sheetsSync = () => {
+    if (syncRun) { syncAgain = true; return syncRun }
+    syncRun = (async () => {
+      do {
+        syncAgain = false
+        try {
+          const { state: remote } = await sheetsLoad()
+          const base = getBase()
+          const mergeNow = () => {
+            const local = get().S
+            if (!remote) return local
+            if (base && sameState(remote, base)) return local           // nothing new stored
+            return mergeStates(base, local, remote)
+          }
+          let next = mergeNow()
+          if (!sameState(next, get().S)) { persist(next, false); next = get().S }
+          if (!remote || !sameState(next, remote)) await sheetsSave(next)
+          setBase(next)
+          localStorage.removeItem('gym_dirty')
+          if (get().S !== next) syncAgain = true                         // changed while saving
+        } catch (e) {
+          localStorage.setItem('gym_dirty', '1')
+          syncAgain = false
+        }
+      } while (syncAgain)
+    })().finally(() => { syncRun = null })
+    return syncRun
+  }
 
   // Everything a sign-out leaves behind on this device, whichever way it was triggered.
   const clearLocalSession = () => {
@@ -113,16 +159,17 @@ export const useStore = create((set, get) => {
     async pushState() {
       if (!get().user) return
       clearTimeout(pushTm)
+      if (SHEETS) return sheetsSync()
       try {
-        if (SHEETS) await sheetsSave(get().S)
-        else await api('/api/data', { method: 'PUT', body: JSON.stringify({ state: get().S }) })
+        await api('/api/data', { method: 'PUT', body: JSON.stringify({ state: get().S }) })
         localStorage.removeItem('gym_dirty')
       }
       catch (e) { localStorage.setItem('gym_dirty', '1') }
     },
     async pullState() {
+      if (SHEETS) return sheetsSync()
       try {
-        const { state } = SHEETS ? await sheetsLoad() : await api('/api/data')
+        const { state } = await api('/api/data')
         const S = get().S
         const dirty = localStorage.getItem('gym_dirty') === '1'
         if (state && (!hasData(S) || ((state._ts || 0) >= (S._ts || 0) && !dirty))) {
@@ -138,6 +185,7 @@ export const useStore = create((set, get) => {
       if (SHEETS) {
         await get().pushState()   // never throws
         clearSheetsConfig()
+        localStorage.removeItem(BASE_KEY)
         clearLocalSession()
         return
       }
@@ -161,9 +209,10 @@ export const useStore = create((set, get) => {
         if (local.active) next.active = local.active
         localStorage.removeItem('gym_dirty')
         persist(next, false)
+        setBase(state)
         return 'pulled'
       }
-      if (hasData(local)) { await get().pushState(); return 'pushed' }
+      if (hasData(local)) { await sheetsSave(local, clean); setBase(local); return 'pushed' }
       return 'empty'
     },
 
