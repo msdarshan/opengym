@@ -391,3 +391,41 @@ describe('applyPrescription', () => {
     expect(applyPrescription(timed, { kind: 'up', sec: 50 })).toEqual([{ sec: 50, w: 0, done: false }])
   })
 })
+
+// A working weight that isn't a multiple of the step (32.5 kg on a 5 kg-step back lift, a
+// 7.5 kg dumbbell on a 2.5 kg step after a manual change...) must go up by exactly the step.
+// Rounding the result to a multiple of the step turned 32.5 + 5 into 40.
+describe('weight increases keep an off-grid working weight on its own grid', () => {
+  const BACK = EXDB.find(e => e.bp === 'back').id
+  it('lat pulldown at 32.5 kg (5 kg step) goes to 37.5, not 40 — double progression', () => {
+    const cfg = { id: BACK, sets: 3, reps: 10, repsMin: 8, prog: 'double' }
+    const p = nextPrescription(hist(BACK, [[32.5, 10, 10, 10]], { sets: 3, reps: 10 }), cfg)
+    expect(p.kind).toBe('up')
+    expect(p.weight).toBe(37.5)
+    expect(p.why[1]).toBe(5)                        // "5 kg more" — and it really is
+  })
+  it('linear progression adds exactly one step from an odd weight', () => {
+    const cfg = { id: LIFT, sets: 3, reps: 5, prog: 'linear' }
+    expect(nextPrescription(hist(LIFT, [[21.5, 5, 5, 5]]), cfg).weight).toBe(24)
+  })
+  it('a Greyskull double jump adds exactly two steps', () => {
+    const cfg = { id: BACK, sets: 3, reps: 5, prog: 'greyskull' }
+    const p = nextPrescription(hist(BACK, [[32.5, 5, 5, 10]]), cfg)
+    expect(p.weight).toBe(42.5)                     // 32.5 + 2 × 5
+  })
+  it('on-grid weights behave exactly as before', () => {
+    const cfg = { id: LIFT, sets: 3, reps: 5, prog: 'linear' }
+    expect(nextPrescription(hist(LIFT, [[60, 5, 5, 5]]), cfg).weight).toBe(62.5)
+  })
+  it('floating-point steps stay clean', () => {
+    const cfg = { id: LIFT, sets: 3, reps: 5, prog: 'linear', inc: 0.1 }
+    expect(nextPrescription(hist(LIFT, [[20.2, 5, 5, 5]]), cfg).weight).toBe(20.3)
+  })
+  it('deloads still land on a loadable weight', () => {
+    const cfg = { id: BACK, sets: 3, reps: 10, repsMin: 8, prog: 'double' }
+    const rows = [[32.5, 9, 9, 9], [32.5, 9, 9, 9], [32.5, 9, 9, 9]]
+    const p = nextPrescription(hist(BACK, rows, { sets: 3, reps: 10 }), cfg)
+    expect(p.kind).toBe('deload')
+    expect(p.weight).toBe(30)                       // 29.25 → nearest 5 kg step
+  })
+})

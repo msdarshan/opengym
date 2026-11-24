@@ -71,7 +71,11 @@ export function policyFor(cfg, routine, mode) {
 }
 
 const round1 = v => Math.round(v * 10) / 10
-// Snap to a loadable multiple of the step.
+// Going up: you just lifted `w`, so `w + step` is loadable as it stands. Snapping it to a
+// multiple of the step instead turned 32.5 kg + 5 kg into 40 kg — a 7.5 kg jump — whenever
+// the weight you work with isn't itself a multiple of the step.
+const addStep = (w, step) => round1(w + step)
+// Snap to a loadable multiple of the step (deloads, where 90 % of a weight lands anywhere).
 function snap(v, step) {
   if (!(step > 0)) return round1(v)
   return round1(Math.round(v / step) * step)
@@ -191,7 +195,7 @@ export function nextPrescription(S, cfg, routine) {
   if (policy === 'double') {
     const top = cfg.reps || last.goal || 10
     const bottom = Math.min(cfg.repsMin || Math.max(1, top - 2), top)
-    if (last.ok) return { policy, kind: 'up', weight: snap(w + inc, inc), reps: bottom, why: ['Top of the rep range in every set — {0} {1} more, back to {2} reps.', inc, unit, bottom] }
+    if (last.ok) return { policy, kind: 'up', weight: addStep(w, inc), reps: bottom, why: ['Top of the rep range in every set — {0} {1} more, back to {2} reps.', inc, unit, bottom] }
     if (stalls >= deloadAt) {
       const dw = deloadTo(w, inc)
       return { policy, kind: 'deload', weight: dw, reps: bottom, why: ['Stalled {0} sessions — deload to {1} {2}.', stalls, dw, unit] }
@@ -207,7 +211,7 @@ export function nextPrescription(S, cfg, routine) {
     const dbl = policy === 'greyskull' && last.goal > 0 && last.amrap >= last.goal * 2
     const step = dbl ? inc * 2 : inc
     return {
-      policy, kind: 'up', weight: snap(w + step, inc),
+      policy, kind: 'up', weight: addStep(w, step),
       why: dbl
         ? ['Last set hit {0} reps — twice the target, so take a double jump of {1} {2}.', last.amrap, step, unit]
         : ['Every rep last time — {0} {1} more.', step, unit]
