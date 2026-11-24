@@ -198,12 +198,15 @@ function analyze(payload) {
 
   const pinned = PropertiesService.getScriptProperties().getProperty('GEMINI_MODEL');
   const models = pinned ? [pinned] : GEMINI_MODELS;
+  let busy = null;
   for (let i = 0; i < models.length; i++) {
     let res = callGemini(key, models[i], text, true);
     if (res.retryWithoutThinking) res = callGemini(key, models[i], text, false);
     if (res.notFound) continue;                       // model retired → try the next one
+    if (res.overloaded) { busy = res; continue; }     // free tier busy → try the next one
     return res;
   }
+  if (busy) return { ok: false, status: 503, error: 'Gemini is very busy right now (free tier) — try again in a few minutes' };
   return { ok: false, status: 404, error: 'None of the Gemini models are available — set GEMINI_MODEL in Script properties' };
 }
 
@@ -225,6 +228,9 @@ function callGemini(key, model, text, withThinking) {
   const msg = (d.error && d.error.message) || '';
 
   if (code === 404) return { notFound: true };
+  // "This model is currently experiencing high demand" (503) or a server error: another model
+  // on the list may well be free.
+  if (code === 503 || code === 500 || code === 502 || code === 504) return { overloaded: true, status: code };
   if (code === 400 && withThinking && /thinking/i.test(msg)) return { retryWithoutThinking: true };
   if (code === 429) return { ok: false, status: 429, error: 'The free Gemini limit is used up for now — try again in a few minutes' };
   if (code === 401 || code === 403) return { ok: false, status: code, error: 'Gemini rejected the API key — check GEMINI_API_KEY in Script properties' };
@@ -238,4 +244,17 @@ function callGemini(key, model, text, withThinking) {
   const out = parts.filter(function (p) { return p.text && !p.thought; }).map(function (p) { return p.text; }).join('').trim();
   if (!out) return { ok: false, status: 502, error: 'Gemini returned no text' + (c && c.finishReason ? ' (' + c.finishReason + ')' : '') };
   return { ok: true, text: out, model: model, truncated: !!(c && c.finishReason === 'MAX_TOKENS') };
+}
+
+// Run this once from the editor (choose it in the function list, click Run) to grant the
+// "Connect to an external service" permission the AI coach needs. It also checks the key:
+// the log shows whether Gemini accepted it.
+function authorizeCoach() {
+  const r = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=50',
+    { headers: { 'x-goog-api-key': geminiKey() }, muteHttpExceptions: true });
+  const code = r.getResponseCode();
+  if (code !== 200) { Logger.log('Gemini answered HTTP ' + code + ' — check GEMINI_API_KEY in Script properties'); return; }
+  const names = (JSON.parse(r.getContentText()).models || []).map(function (m) { return String(m.name).replace('models/', ''); });
+  const usable = GEMINI_MODELS.filter(function (m) { return names.indexOf(m) !== -1; });
+  Logger.log('Gemini key works. Coach will use: ' + (usable[0] || 'none of ' + GEMINI_MODELS.join(', ') + ' — set GEMINI_MODEL'));
 }

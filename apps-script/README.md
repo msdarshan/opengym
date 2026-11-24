@@ -40,6 +40,22 @@ code, and set `SHEET_ID` to the long ID in your Sheet's URL (between `/d/` and `
 Open your openGym site, paste the **Web app URL** and your **access key**, and tap
 **Connect Google Sheet**. Do the same once on every device you use.
 
+## 4. AI coach (optional, free)
+
+The app can ask Google Gemini for feedback on a session ("Analyze this session" on the
+workout summary and in History).
+
+1. Get a free API key at <https://aistudio.google.com/apikey>.
+2. In Apps Script: **Project Settings (gear) → Script properties → Add script property**:
+   name `GEMINI_API_KEY`, value = your key → **Save script properties**.
+3. In the editor, choose **`authorizeCoach`** in the function list and click **Run**, then
+   approve **"Connect to an external service"**. The log should say *"Gemini key works"*.
+
+The key stays in your Google account; the app never sees it. Only the session's training
+data is sent (no name or access key). On Gemini's free tier Google may use what you send to
+improve its products. If the first model on the list is busy or retired, the script tries
+the next one; set a `GEMINI_MODEL` script property to pin one.
+
 ## Changing the script later
 
 After editing `Code.gs` (for example to change the key), use **Deploy → Manage deployments →

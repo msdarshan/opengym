@@ -79,6 +79,13 @@ async function call(cfg, body, { timeoutMs = TIMEOUT_MS, attempts = ATTEMPTS } =
     throw err
   }
   let data
+  // Apps Script reports a missing OAuth grant (e.g. the AI coach's external-request
+  // permission) as an HTML error page, not JSON.
+  if (/permission to call UrlFetchApp/i.test(text)) {
+    const err = new Error('The script needs permission to contact Gemini — in Apps Script, run authorizeCoach once and click Allow')
+    err.status = 403
+    throw err
+  }
   try { data = JSON.parse(text) } catch {
     const err = new Error(r.ok
       ? 'Google answered with a web page instead of data — redeploy the script with "Who has access: Anyone"'

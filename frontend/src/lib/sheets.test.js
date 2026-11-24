@@ -157,6 +157,11 @@ describe('talking to the script', () => {
     vi.useRealTimers()
   })
 
+  it('explains a missing Apps Script permission instead of a generic web-page error', async () => {
+    respond(null, { raw: '<html>Exception: You do not have permission to call UrlFetchApp.fetch. Required permissions: ...</html>' })
+    await expect(sheetsPing(cfg)).rejects.toThrow(/run authorizeCoach/)
+  })
+
   it('refuses to run without a saved connection', async () => {
     await expect(sheetsLoad()).rejects.toMatchObject({ status: 401 })
   })
