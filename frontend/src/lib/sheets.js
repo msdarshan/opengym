@@ -47,11 +47,11 @@ export const validScriptUrl = u =>
 export const TIMEOUT_MS = 30000
 const ATTEMPTS = 3
 
-async function call(cfg, body) {
+async function call(cfg, body, { timeoutMs = TIMEOUT_MS, attempts = ATTEMPTS } = {}) {
   let r, text = ''
-  for (let i = 0; i < ATTEMPTS; i++) {
+  for (let i = 0; i < attempts; i++) {
     const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null
-    const tm = ctl ? setTimeout(() => ctl.abort(), TIMEOUT_MS) : null
+    const tm = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : null
     try {
       r = await fetch(cfg.url.trim(), {
         method: 'POST',
@@ -102,6 +102,17 @@ export async function sheetsLoad(cfg = sheetsConfig()) {
   if (!cfg) { const e = new Error('Not connected to Google Sheets'); e.status = 401; throw e }
   const d = await call(cfg, { action: 'load' })
   return { state: d.state || null }
+}
+
+/**
+ * AI coach: send one session's data to the script, which asks Gemini (apps-script/Code.gs).
+ * Resolves to { text, model, truncated }. One attempt only — a retried request could be
+ * answered twice and use up the free quota — with a longer limit, since the model thinks.
+ */
+export async function sheetsAnalyze(payload, cfg = sheetsConfig()) {
+  if (!cfg) { const e = new Error('Not connected to Google Sheets'); e.status = 401; throw e }
+  const d = await call(cfg, { action: 'analyze', payload }, { timeoutMs: 120000, attempts: 1 })
+  return { text: d.text || '', model: d.model || '', truncated: !!d.truncated }
 }
 
 /** Same contract as PUT /api/data, plus the readable tables. */

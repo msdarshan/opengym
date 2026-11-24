@@ -39,11 +39,14 @@ function doPost(e) {
     return reply({ ok: false, status: 401, error: 'Wrong access key' });
   }
 
+  // The AI coach needs no spreadsheet access.
+  if (req.action === 'analyze') return reply(analyze(req.payload));
+
   const ss = SHEET_ID ? SpreadsheetApp.openById(SHEET_ID) : SpreadsheetApp.getActiveSpreadsheet();
   if (!ss) return reply({ ok: false, status: 500, error: 'No spreadsheet — set SHEET_ID in the Apps Script code' });
   switch (req.action) {
     case 'ping':
-      return reply({ ok: true, sheet: ss.getName() });
+      return reply({ ok: true, sheet: ss.getName(), ai: !!geminiKey() });
     case 'load':
       return reply({ ok: true, state: readState(ss) });
     case 'save': {
@@ -136,4 +139,103 @@ function writeTable(ss, name, rows) {
   sh.getRange(1, 1, clean.length, width).setValues(clean);
   sh.getRange(1, 1, 1, width).setFontWeight('bold');
   sh.setFrozenRows(1);
+}
+
+/* ------------------------------------------------------------------------------------------
+ * AI coach — post-session feedback from Google Gemini (free tier).
+ *
+ * Setup: get a free API key at https://aistudio.google.com/apikey, then in this Apps Script
+ * project open Project Settings (gear) → Script properties → Add property:
+ *   GEMINI_API_KEY = <your key>
+ * Optional: GEMINI_MODEL to pin a model instead of the list below.
+ * The key stays in your Google account; the app never sees it.
+ *
+ * Note: on Gemini's free tier, Google may use what you send to improve its products.
+ * The app sends only the session's training data (exercises, sets, weights, reps, effort,
+ * body weight, your note) — never your name, access key or other accounts' data.
+ * ---------------------------------------------------------------------------------------- */
+
+// Tried in order: the first that exists on the free tier answers. Gemini model names change
+// often — if all of these are gone, set GEMINI_MODEL in Script properties.
+const GEMINI_MODELS = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'];
+const MAX_PAYLOAD = 60000;  // characters of session data sent to the model
+
+const COACH_PROMPT = [
+  'You are an experienced, encouraging strength and hypertrophy coach reviewing ONE gym session',
+  'that the athlete just logged in the openGym app. You receive the session as JSON: the',
+  'exercises done with every set (weight, reps, optional RIR/RPE effort), the plan targets and',
+  'progression rule for each exercise, the previous sessions of the same exercises, the target',
+  'the app will prescribe next time (`nextTarget`, with its reason), skipped exercises, recent',
+  'body weight, the weekly plan, and optionally a question from the athlete (`athleteNote`).',
+  '',
+  'Write a short, specific review (about 150-250 words) in Markdown with these sections:',
+  '## How it went — 2-3 sentences; name real numbers and compare with previous sessions.',
+  '## Next session — 2-4 bullets with concrete weights/reps per exercise. Agree with the',
+  '   app\'s nextTarget unless the data clearly says otherwise, and then say why.',
+  '## Watch out — only if the data shows something (e.g. big rep drop-offs, sets far below',
+  '   the rep range, warm-up sets logged as work sets, skipped exercises, very short rests',
+  '   implied by duration). Otherwise leave this section out.',
+  'If there is an athleteNote, answer it in a final ## Your question section.',
+  '',
+  'Rules: use the athlete\'s unit (`unit`). Dumbbell weights are per dumbbell. Be direct and',
+  'practical, no generic filler, no emojis. Never give medical diagnoses; if pain or injury is',
+  'mentioned, suggest stopping that movement and seeing a professional. If the data is too thin',
+  'for a recommendation, say what to log next time instead of guessing.'
+].join('\n');
+
+function geminiKey() {
+  return PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY') || '';
+}
+
+function analyze(payload) {
+  const key = geminiKey();
+  if (!key) {
+    return { ok: false, status: 503, error: 'The AI coach isn’t set up yet — add GEMINI_API_KEY under Apps Script → Project Settings → Script properties' };
+  }
+  if (!payload || typeof payload !== 'object') return { ok: false, status: 400, error: 'Missing session data' };
+  const text = JSON.stringify(payload);
+  if (text.length > MAX_PAYLOAD) return { ok: false, status: 413, error: 'Session data too large to analyze' };
+
+  const pinned = PropertiesService.getScriptProperties().getProperty('GEMINI_MODEL');
+  const models = pinned ? [pinned] : GEMINI_MODELS;
+  for (let i = 0; i < models.length; i++) {
+    let res = callGemini(key, models[i], text, true);
+    if (res.retryWithoutThinking) res = callGemini(key, models[i], text, false);
+    if (res.notFound) continue;                       // model retired → try the next one
+    return res;
+  }
+  return { ok: false, status: 404, error: 'None of the Gemini models are available — set GEMINI_MODEL in Script properties' };
+}
+
+function callGemini(key, model, text, withThinking) {
+  const body = {
+    systemInstruction: { parts: [{ text: COACH_PROMPT }] },
+    contents: [{ role: 'user', parts: [{ text: 'My session (JSON):\n' + text }] }],
+    generationConfig: { maxOutputTokens: 8192 }
+  };
+  if (withThinking) body.generationConfig.thinkingConfig = { thinkingLevel: 'LOW' };
+
+  const r = UrlFetchApp.fetch(
+    'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent',
+    { method: 'post', contentType: 'application/json', headers: { 'x-goog-api-key': key },
+      payload: JSON.stringify(body), muteHttpExceptions: true });
+  const code = r.getResponseCode();
+  let d = {};
+  try { d = JSON.parse(r.getContentText()); } catch (err) { /* not JSON */ }
+  const msg = (d.error && d.error.message) || '';
+
+  if (code === 404) return { notFound: true };
+  if (code === 400 && withThinking && /thinking/i.test(msg)) return { retryWithoutThinking: true };
+  if (code === 429) return { ok: false, status: 429, error: 'The free Gemini limit is used up for now — try again in a few minutes' };
+  if (code === 401 || code === 403) return { ok: false, status: code, error: 'Gemini rejected the API key — check GEMINI_API_KEY in Script properties' };
+  if (code !== 200) return { ok: false, status: code, error: 'Gemini error ' + code + (msg ? ': ' + msg : '') };
+
+  if (d.promptFeedback && d.promptFeedback.blockReason) {
+    return { ok: false, status: 422, error: 'Gemini declined this request (' + d.promptFeedback.blockReason + ')' };
+  }
+  const c = (d.candidates || [])[0];
+  const parts = (c && c.content && c.content.parts) || [];
+  const out = parts.filter(function (p) { return p.text && !p.thought; }).map(function (p) { return p.text; }).join('').trim();
+  if (!out) return { ok: false, status: 502, error: 'Gemini returned no text' + (c && c.finishReason ? ' (' + c.finishReason + ')' : '') };
+  return { ok: true, text: out, model: model, truncated: !!(c && c.finishReason === 'MAX_TOKENS') };
 }
